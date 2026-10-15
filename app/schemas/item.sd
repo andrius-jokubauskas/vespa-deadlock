@@ -1,0 +1,32 @@
+schema item {
+
+    document item {
+
+        field seq type int {
+            indexing: attribute
+            attribute: fast-search
+        }
+
+        field title type string {
+            indexing: index
+        }
+
+        field popularity type float {
+            indexing: attribute
+        }
+    }
+
+    rank-profile limited {
+        num-threads-per-search: 4
+
+        first-phase {
+            expression: attribute(popularity)
+        }
+
+        match-phase {
+            attribute: seq
+            order: descending
+            max-hits: 1000
+        }
+    }
+}
