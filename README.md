@@ -124,16 +124,3 @@ times out (up to `ADAPTIVE_TRIES`, default 20).
 - Data: only the last 10% of the items (the highest docids) have the title "hot". The query is
   `title contains "hot"`, so most threads run out of work early while one thread reaches the
   match-phase sample limit. That's the interleaving above.
-
-## Possible fixes
-
-- **Short term:** don't combine the two. When the match-phase limiter is enabled, fall back from
-  `AdaptiveDocidRangeScheduler` to the task scheduler (or turn off work sharing).
-- **Longer term:** make the match-frequency estimate not depend on every thread reaching a
-  rendezvous inside the match loop. Or let idle threads in `next_range` take part in it, for
-  example by having the scheduler wake idle threads when a thread enters the rendezvous.
-- Either way, both waits could check the query's doom, so a bug like this ends at the query timeout
-  instead of keeping the threads forever.
-
-We haven't built a patched Vespa. If you agree on a direction, we are happy to open a PR with the
-change and a test, and to verify it against this repro.
