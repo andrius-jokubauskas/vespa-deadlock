@@ -124,3 +124,34 @@ times out (up to `ADAPTIVE_TRIES`, default 20).
 - Data: only the last 10% of the items (the highest docids) have the title "hot". The query is
   `title contains "hot"`, so most threads run out of work early while one thread reaches the
   match-phase sample limit. That's the interleaving above.
+
+## Related side problem: the match-phase decision depends on the scheduler
+
+The task scheduler (`numSearchPartitions` > threads) doesn't hang. But with the same data and the
+same query, the match-phase limiter decides differently depending on `numSearchPartitions`:
+
+```sh
+uv run repro.py limiter
+```
+
+```
+default                  totalCount= 20000 match-phase degraded=False ['Will not limit due to upper_limited_corpus_size <= wanted_num_docs']
+numSearchPartitions=4    totalCount= 20000 match-phase degraded=False ['Will not limit due to upper_limited_corpus_size <= wanted_num_docs']
+numSearchPartitions=8    totalCount= 20000 match-phase degraded=False ['Will not limit due to upper_limited_corpus_size <= wanted_num_docs']
+numSearchPartitions=16   totalCount=  4098 match-phase degraded=True  ['Will limit with prefix filter']
+numSearchPartitions=64   totalCount=  2198 match-phase degraded=True  ['Will limit with prefix filter']
+```
+
+- **Where the decision is made.** It happens in the same `estimate_match_frequency` rendezvous.
+  The inputs are the match frequency and the remaining corpus, which come from how much of the
+  docid space the threads covered (`scheduler.total_size`, `unassigned_size`).
+- **Why the scheduler matters.**
+  - With static partitions, a thread waiting in the rendezvous holds back only its own range.
+  - With tasks, the other threads keep taking new tasks (`next_range` doesn't block) until they
+    also reach the sample limit or run out of tasks.
+  - So what has been matched, and what is left, at decision time depends on the scheduler and on
+    where in the docid space the matches are.
+- **The opposite direction also happens.** On a larger, real index we saw the reverse too: the
+  default limits, while `numSearchPartitions=16` doesn't limit at all. It then matches ~80× more
+  documents and takes ~2.5× longer. Such queries return different hits than with the default
+  scheduler.

@@ -4,10 +4,13 @@
     uv run repro.py feed     # N_DOCS items; "hot" titles only in the last HOT_SHARE of the docid space
     uv run repro.py test     # default scheduler, then adaptive until a query hangs, then default again
     uv run repro.py stacks   # gdb stacks of the blocked match threads
+    uv run repro.py limiter  # side problem: match-phase decision changes with numSearchPartitions
 """
 
+import json
 import os
 import random
+import re
 import subprocess
 import sys
 import time
@@ -80,6 +83,20 @@ def test():
     print(f"\nThe node stays stuck until proton restarts: docker restart {CONTAINER}")
 
 
+def limiter():
+    """Side problem: the match-phase decision for the same query and data depends on numSearchPartitions."""
+    for partitions in (None, 4, 8, 16, 64):
+        params = {"yql": 'select * from item where title contains "hot"', "ranking": "limited", "hits": 10,
+                  "timeout": "5s", "trace.level": 1, "trace.explainLevel": 1}
+        if partitions is not None:
+            params["ranking.matching.numSearchPartitions"] = partitions
+        r = requests.get(SEARCH, params=params, timeout=30).json()
+        decisions = sorted(set(re.findall(r'"action": "([^"]+)"', json.dumps(r.get("trace", {})))))
+        degraded = (r["root"].get("coverage", {}).get("degraded") or {}).get("match-phase", False)
+        label = "default" if partitions is None else f"numSearchPartitions={partitions}"
+        print(f"{label:24s} totalCount={r['root']['fields'].get('totalCount'):6d} match-phase degraded={degraded!s:5s} {decisions}")
+
+
 def stacks():
     gdb = ("gdb -p $(pgrep -f vespa-proton-bin) -batch -ex 'thread apply all bt 8' 2>/dev/null"
            " | grep -B1 -A6 -E 'AdaptiveDocidRangeScheduler::next_range|MatchLoopCommunicator::estimate_match_frequency'"
@@ -88,4 +105,4 @@ def stacks():
 
 
 if __name__ == "__main__":
-    {"deploy": deploy, "feed": feed, "test": test, "stacks": stacks}[sys.argv[1]]()
+    {"deploy": deploy, "feed": feed, "test": test, "stacks": stacks, "limiter": limiter}[sys.argv[1]]()
